@@ -1,8 +1,8 @@
-# Privacy Policy — Shield Ad Blocker
+# Privacy Policy — Ad Blocker — Block Ads, Pop-ups & YouTube Ads
 
 **Effective date:** 2026-06-24
 
-Shield Ad Blocker does **not** collect, transmit, sell, or share any personal or
+This extension does **not** collect, transmit, sell, or share any personal or
 browsing data. There are no accounts, no analytics, no remote servers, and no
 network requests made by the extension to any first- or third-party endpoint.
 
@@ -19,4 +19,4 @@ This data never leaves your browser and is removed when you uninstall the extens
 - **scripting / host access (`<all_urls>`)** — run the cosmetic content script that hides leftover ad containers on the pages you visit. It reads only your local settings and sends nothing anywhere.
 
 ## Contact
-For questions about this policy, contact: <your-email@example.com>
+For questions about this policy, contact: <barichati0696@gmail.com>
