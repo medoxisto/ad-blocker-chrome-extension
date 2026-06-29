@@ -12,21 +12,29 @@ async function activeTab() {
 }
 
 async function load() {
-  const tab = await activeTab();
-  const res = await chrome.runtime.sendMessage({ type: "getStatus", url: tab?.url || "" });
-  currentHost = res.host;
+  try {
+    const tab = await activeTab();
+    const res = await chrome.runtime.sendMessage({ type: "getStatus", url: tab?.url || "" });
+    if (!res) throw new Error("No status received");
+    currentHost = res.host;
 
-  globalToggle.checked = res.enabled;
-  siteToggle.checked = res.siteAllowed;
+    globalToggle.checked = res.enabled;
+    siteToggle.checked = res.siteAllowed;
 
-  if (currentHost) {
-    siteLabel.textContent = currentHost;
-    siteLabel.classList.remove("muted");
-  } else {
-    siteLabel.textContent = "This page can't be filtered";
+    if (currentHost) {
+      siteLabel.textContent = currentHost;
+      siteLabel.classList.remove("muted");
+    } else {
+      siteLabel.textContent = "This page can't be filtered";
+      siteToggle.disabled = true;
+    }
+    reflectEnabled(res.enabled);
+  } catch (e) {
+    console.error("Shield: Popup load failed", e);
+    siteLabel.textContent = "Error loading status";
     siteToggle.disabled = true;
+    globalToggle.disabled = true;
   }
-  reflectEnabled(res.enabled);
 }
 
 function reflectEnabled(on) {
@@ -35,17 +43,25 @@ function reflectEnabled(on) {
 }
 
 globalToggle.addEventListener("change", async () => {
-  const res = await chrome.runtime.sendMessage({ type: "toggleGlobal" });
-  globalToggle.checked = res.enabled;
-  reflectEnabled(res.enabled);
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "toggleGlobal" });
+    globalToggle.checked = res.enabled;
+    reflectEnabled(res.enabled);
+  } catch (e) {
+    console.error("Shield: Global toggle failed", e);
+  }
 });
 
 siteToggle.addEventListener("change", async () => {
   if (!currentHost) return;
-  await chrome.runtime.sendMessage({ type: "toggleSite", host: currentHost });
-  // Reload the tab so cosmetic filtering re-evaluates the new allowlist state.
-  const tab = await activeTab();
-  if (tab?.id) chrome.tabs.reload(tab.id);
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "toggleSite", host: currentHost });
+    // Reload the tab so cosmetic filtering re-evaluates the new allowlist state.
+    const tab = await activeTab();
+    if (tab?.id) chrome.tabs.reload(tab.id);
+  } catch (e) {
+    console.error("Shield: Site toggle failed", e);
+  }
 });
 
 load();

@@ -467,13 +467,46 @@ function xmlPrune(source,args){const uniqueIdentifier=source.uniqueId+source.nam
     try { fn(source, args || []); } catch (e) {}
   }
 
-  document.addEventListener("invoke-scriptlet", function (e) {
-    var fa = e && e.detail && e.detail.filter_args;
-    if (!Array.isArray(fa)) return;
-    for (var i = 0; i < fa.length; i++) {
-      if (fa[i] && fa[i].function) runOne(fa[i].function, fa[i].args);
-    }
-  });
+  // Secure token retrieval
+  var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeDispatchEvent = EventTarget.prototype.dispatchEvent;
+  var nativeCustomEvent = window.CustomEvent;
 
-  try { document.dispatchEvent(new CustomEvent("request-invoke-scriptlets")); } catch (_) {}
+  function retrieveToken() {
+    var el = document.documentElement;
+    if (el && el.hasAttribute("data-shield-token")) {
+      var token = el.getAttribute("data-shield-token");
+      el.removeAttribute("data-shield-token");
+      return token;
+    }
+    return null;
+  }
+
+  function init(secretToken) {
+    nativeAddEventListener.call(document, "invoke-" + secretToken, function (e) {
+      var fa = e && e.detail && e.detail.filter_args;
+      if (!Array.isArray(fa)) return;
+      for (var i = 0; i < fa.length; i++) {
+        if (fa[i] && fa[i].function) runOne(fa[i].function, fa[i].args);
+      }
+    });
+
+    try {
+      nativeDispatchEvent.call(document, new nativeCustomEvent("request-invoke-" + secretToken));
+    } catch (_) {}
+  }
+
+  var secretToken = retrieveToken();
+  if (secretToken) {
+    init(secretToken);
+  } else {
+    var observer = new MutationObserver(function () {
+      var token = retrieveToken();
+      if (token) {
+        observer.disconnect();
+        init(token);
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }
 })();

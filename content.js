@@ -10,21 +10,63 @@
 // as soon as it loads, then waits for us to answer with an "invoke-scriptlet" event carrying the
 // per-domain args. We must attach that listener SYNCHRONOUSLY (before any await) or we lose the race.
 
-(() => {
+(async () => {
   const host = location.hostname.replace(/\.$/, "");
   if (!host) return;
+
+  const FILTERS_VERSION = 1; // Sync with background.js
+
+  // Cache native DOM APIs to protect the main-world handshake from page interception
+  const nativeAddEventListener = EventTarget.prototype.addEventListener;
+  const nativeDispatchEvent = EventTarget.prototype.dispatchEvent;
+  const nativeCustomEvent = window.CustomEvent;
+
+  // 1) Establish a secure randomized token with the MAIN world
+  const secretToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+
+  // Set the token on document.documentElement so scriptlets.js (in the MAIN world) can retrieve it
+  const injectToken = () => {
+    if (document.documentElement) {
+      document.documentElement.setAttribute("data-shield-token", secretToken);
+      return true;
+    }
+    return false;
+  };
+
+  if (!injectToken()) {
+    const observer = new MutationObserver(() => {
+      if (injectToken()) {
+        observer.disconnect();
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }
 
   function candidates(h) {
     const out = new Set();
     const base = h.replace(/^www\./, "");
+    
+    // Handle IP addresses and single-label hosts (no dots)
+    const isIPv4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+    const isIPv6 = h.includes(":");
+    const hasDots = h.includes(".");
+    
+    if (isIPv4 || isIPv6 || !hasDots) {
+      out.add(h);
+      out.add(base);
+      return [...out];
+    }
+
     for (const v of [h, base]) {
       const parts = v.split(".");
-      for (let i = 0; i + 2 <= parts.length; i++) out.add(parts.slice(i).join("."));
+      for (let i = 0; i + 2 <= parts.length; i++) {
+        out.add(parts.slice(i).join("."));
+      }
     }
     return [...out];
   }
 
-  const domKeys = candidates(host).map(d => "f:" + d);
+  const domKeys = candidates(host).map(d => `f:${FILTERS_VERSION}:${d}`);
 
   // Merged page data resolves once storage is read.
   let resolveData;
@@ -37,22 +79,31 @@
     dispatched = true;
     if (scriptlets && scriptlets.length) {
       try {
-        document.dispatchEvent(new CustomEvent("invoke-scriptlet", {
+        const event = new nativeCustomEvent("invoke-" + secretToken, {
           detail: { filter_args: scriptlets }
-        }));
+        });
+        nativeDispatchEvent.call(document, event);
       } catch (_) {}
     }
   }
 
-  // 1) Answer the MAIN-world handshake (attach BEFORE the async storage read).
-  document.addEventListener("request-invoke-scriptlets", () => {
+  // 2) Answer the MAIN-world handshake (attach BEFORE the async storage read).
+  nativeAddEventListener.call(document, "request-invoke-" + secretToken, () => {
     dataPromise.then(d => { if (d) sendScriptlets(d.scriptlets); });
   });
 
-  // 2) Read settings + this page's filter entries.
-  chrome.storage.local.get(["enabled", "allowlist", ...domKeys]).then(store => {
-    if (store.enabled === false || (store.allowlist || []).includes(host.replace(/^www\./, ""))) {
+  // 3) Read settings + this page's filter entries.
+  try {
+    const store = await chrome.storage.local.get(["enabled", "allowlist", "_filters_ready_version", ...domKeys]);
+    const isAllowlisted = candidates(host).some(c => (store.allowlist || []).includes(c));
+    if (store.enabled === false || isAllowlisted) {
       resolveData(null); // disabled here → never send args, scriptlets stay idle
+      return;
+    }
+
+    // Verify transactional ready state to ensure integrity
+    if (store._filters_ready_version !== FILTERS_VERSION) {
+      resolveData(null);
       return;
     }
 
@@ -92,7 +143,7 @@
       (document.head || document.documentElement).appendChild(style);
     }
 
-    // Hard-remove nodes, now and as they appear.
+    // Hard-remove nodes, now and as they appear (runs indefinitely for infinite scroll).
     if (acc.domRemove.length) {
       const sel = acc.domRemove.join(",");
       const sweep = () => { try { document.querySelectorAll(sel).forEach(n => n.remove()); } catch (_) {} };
@@ -106,7 +157,8 @@
       const start = () => obs.observe(document.documentElement, { childList: true, subtree: true });
       if (document.documentElement) start();
       else document.addEventListener("readystatechange", start, { once: true });
-      addEventListener("load", () => setTimeout(() => obs.disconnect(), 5000));
     }
-  }).catch(() => resolveData(null));
+  } catch (e) {
+    resolveData(null);
+  }
 })();
