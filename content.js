@@ -73,7 +73,8 @@
 
   // 3) Read settings + this page's filter entries.
   chrome.storage.local.get(["enabled", "allowlist", "_filters_ready_version", ...domKeys]).then(store => {
-    if (store.enabled === false || (store.allowlist || []).includes(host.replace(/^www\./, ""))) {
+    const isAllowlisted = candidates(host).some(c => (store.allowlist || []).includes(c));
+    if (store.enabled === false || isAllowlisted) {
       resolveData(null); // disabled here → never send args, scriptlets stay idle
       return;
     }

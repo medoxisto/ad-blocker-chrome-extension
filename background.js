@@ -24,7 +24,24 @@ async function getState() {
 }
 
 function hostnameOf(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    const host = parsed.hostname.replace(/^www\./, "");
+    return host || null;
+  } catch {
+    return null;
+  }
+}
+
+function candidates(h) {
+  const out = new Set();
+  const base = h.replace(/^www\./, "");
+  for (const v of [h, base]) {
+    const parts = v.split(".");
+    for (let i = 0; i + 2 <= parts.length; i++) out.add(parts.slice(i).join("."));
+  }
+  return [...out];
 }
 
 // Toggle the static ruleset (global switch) and rebuild dynamic allow rules (per-site allowlist).
@@ -44,7 +61,7 @@ async function applyState() {
   const addRules = enabled
     ? allowlist.map((host, i) => ({
         id: DYN_RULE_BASE + i,
-        priority: 100000,                     // beat any static block rule
+        priority: 2000000,                    // beat any static block rule (max static priority is ~1,100,302)
         action: { type: "allowAllRequests" },
         condition: { requestDomains: [host], resourceTypes: ["main_frame", "sub_frame"] }
       }))
@@ -142,7 +159,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.type === "getStatus") {
         const { enabled, allowlist } = await getState();
         const host = hostnameOf(msg.url);
-        sendResponse({ enabled, host, siteAllowed: host ? allowlist.includes(host) : false });
+        const siteAllowed = host ? candidates(host).some(c => allowlist.includes(c)) : false;
+        sendResponse({ enabled, host, siteAllowed });
       } else if (msg.type === "toggleGlobal") {
         const { enabled } = await getState();
         await chrome.storage.local.set({ [ENABLED_KEY]: !enabled });
