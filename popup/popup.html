@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon48.png" alt="" width="28" height="28">
+    <h1>Shield Ad Blocker</h1>
+  </header>
+
+  <div class="row">
+    <span>Protection</span>
+    <label class="switch">
+      <input type="checkbox" id="globalToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="row site">
+    <span id="siteLabel" class="muted">This site</span>
+    <label class="switch">
+      <input type="checkbox" id="siteToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+  <p class="hint" id="siteHint">On = allow ads on this site only.</p>
+
+  <footer>
+    <span class="muted">No accounts. No data collected.</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
