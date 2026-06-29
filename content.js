@@ -14,6 +14,27 @@
   const host = location.hostname.replace(/\.$/, "");
   if (!host) return;
 
+  const FILTERS_VERSION = 1; // Sync with background.js
+
+  // Cache native DOM APIs to protect the main-world handshake from page interception
+  const nativeAddEventListener = EventTarget.prototype.addEventListener;
+  const nativeDispatchEvent = EventTarget.prototype.dispatchEvent;
+  const nativeCustomEvent = window.CustomEvent;
+
+  // 1) Establish a secure randomized token with the MAIN world
+  const secretToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  let tokenTemp = secretToken;
+
+  Object.defineProperty(window, "__shield_token", {
+    get() {
+      const val = tokenTemp;
+      tokenTemp = undefined; // Self-deleting on first access
+      try { delete window.__shield_token; } catch(_) {}
+      return val;
+    },
+    configurable: true
+  });
+
   function candidates(h) {
     const out = new Set();
     const base = h.replace(/^www\./, "");
@@ -24,7 +45,7 @@
     return [...out];
   }
 
-  const domKeys = candidates(host).map(d => "f:" + d);
+  const domKeys = candidates(host).map(d => `f:${FILTERS_VERSION}:${d}`);
 
   // Merged page data resolves once storage is read.
   let resolveData;
@@ -37,22 +58,29 @@
     dispatched = true;
     if (scriptlets && scriptlets.length) {
       try {
-        document.dispatchEvent(new CustomEvent("invoke-scriptlet", {
+        const event = new nativeCustomEvent("invoke-" + secretToken, {
           detail: { filter_args: scriptlets }
-        }));
+        });
+        nativeDispatchEvent.call(document, event);
       } catch (_) {}
     }
   }
 
-  // 1) Answer the MAIN-world handshake (attach BEFORE the async storage read).
-  document.addEventListener("request-invoke-scriptlets", () => {
+  // 2) Answer the MAIN-world handshake (attach BEFORE the async storage read).
+  nativeAddEventListener.call(document, "request-invoke-" + secretToken, () => {
     dataPromise.then(d => { if (d) sendScriptlets(d.scriptlets); });
   });
 
-  // 2) Read settings + this page's filter entries.
-  chrome.storage.local.get(["enabled", "allowlist", ...domKeys]).then(store => {
+  // 3) Read settings + this page's filter entries.
+  chrome.storage.local.get(["enabled", "allowlist", "_filters_ready_version", ...domKeys]).then(store => {
     if (store.enabled === false || (store.allowlist || []).includes(host.replace(/^www\./, ""))) {
       resolveData(null); // disabled here → never send args, scriptlets stay idle
+      return;
+    }
+
+    // Verify transactional ready state to ensure integrity
+    if (store._filters_ready_version !== FILTERS_VERSION) {
+      resolveData(null);
       return;
     }
 
@@ -92,7 +120,7 @@
       (document.head || document.documentElement).appendChild(style);
     }
 
-    // Hard-remove nodes, now and as they appear.
+    // Hard-remove nodes, now and as they appear (runs indefinitely for infinite scroll).
     if (acc.domRemove.length) {
       const sel = acc.domRemove.join(",");
       const sweep = () => { try { document.querySelectorAll(sel).forEach(n => n.remove()); } catch (_) {} };
@@ -106,7 +134,6 @@
       const start = () => obs.observe(document.documentElement, { childList: true, subtree: true });
       if (document.documentElement) start();
       else document.addEventListener("readystatechange", start, { once: true });
-      addEventListener("load", () => setTimeout(() => obs.disconnect(), 5000));
     }
   }).catch(() => resolveData(null));
 })();

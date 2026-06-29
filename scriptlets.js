@@ -467,13 +467,23 @@ function xmlPrune(source,args){const uniqueIdentifier=source.uniqueId+source.nam
     try { fn(source, args || []); } catch (e) {}
   }
 
-  document.addEventListener("invoke-scriptlet", function (e) {
-    var fa = e && e.detail && e.detail.filter_args;
-    if (!Array.isArray(fa)) return;
-    for (var i = 0; i < fa.length; i++) {
-      if (fa[i] && fa[i].function) runOne(fa[i].function, fa[i].args);
-    }
-  });
+  // Secure token retrieval
+  var secretToken = window.__shield_token;
+  if (secretToken) {
+    var nativeAddEventListener = EventTarget.prototype.addEventListener;
+    var nativeDispatchEvent = EventTarget.prototype.dispatchEvent;
+    var nativeCustomEvent = window.CustomEvent;
 
-  try { document.dispatchEvent(new CustomEvent("request-invoke-scriptlets")); } catch (_) {}
+    nativeAddEventListener.call(document, "invoke-" + secretToken, function (e) {
+      var fa = e && e.detail && e.detail.filter_args;
+      if (!Array.isArray(fa)) return;
+      for (var i = 0; i < fa.length; i++) {
+        if (fa[i] && fa[i].function) runOne(fa[i].function, fa[i].args);
+      }
+    });
+
+    try {
+      nativeDispatchEvent.call(document, new nativeCustomEvent("request-invoke-" + secretToken));
+    } catch (_) {}
+  }
 })();
