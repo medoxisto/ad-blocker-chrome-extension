@@ -37,9 +37,23 @@ function hostnameOf(url) {
 function candidates(h) {
   const out = new Set();
   const base = h.replace(/^www\./, "");
+  
+  // Handle IP addresses and single-label hosts (no dots)
+  const isIPv4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+  const isIPv6 = h.includes(":");
+  const hasDots = h.includes(".");
+  
+  if (isIPv4 || isIPv6 || !hasDots) {
+    out.add(h);
+    out.add(base);
+    return [...out];
+  }
+
   for (const v of [h, base]) {
     const parts = v.split(".");
-    for (let i = 0; i + 2 <= parts.length; i++) out.add(parts.slice(i).join("."));
+    for (let i = 0; i + 2 <= parts.length; i++) {
+      out.add(parts.slice(i).join("."));
+    }
   }
   return [...out];
 }
@@ -69,9 +83,13 @@ async function applyState() {
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
 }
 
+let isPopulating = false;
+
 // Load the bundled cosmetic/scriptlet data into storage as one key per domain ("f:<version>:<domain>"),
 // so the content script can look up its page with a fast indexed read. Runs once per version.
 async function populateFilters() {
+  if (isPopulating) return;
+  isPopulating = true;
   try {
     const { [FILTERS_VERSION_KEY]: readyVersion } = await chrome.storage.local.get(FILTERS_VERSION_KEY);
     if (readyVersion === FILTERS_VERSION) return;
@@ -130,6 +148,8 @@ async function populateFilters() {
   } catch (e) {
     // Non-fatal: network blocking still works without cosmetic data.
     console.warn("Shield: filter load failed", e);
+  } finally {
+    isPopulating = false;
   }
 }
 
@@ -168,12 +188,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ enabled: !enabled });
       } else if (msg.type === "toggleSite") {
         const { allowlist } = await getState();
-        const next = allowlist.includes(msg.host)
-          ? allowlist.filter(h => h !== msg.host)
-          : [...allowlist, msg.host];
+        const hostCandidates = candidates(msg.host);
+        const hasMatched = hostCandidates.some(c => allowlist.includes(c));
+        
+        let next;
+        if (hasMatched) {
+          // Remove all matching candidate domains from allowlist
+          next = allowlist.filter(h => !hostCandidates.includes(h));
+        } else {
+          // Add msg.host to allowlist
+          next = [...allowlist, msg.host];
+        }
         await chrome.storage.local.set({ [ALLOWLIST_KEY]: next });
         await applyState();
-        sendResponse({ siteAllowed: next.includes(msg.host) });
+        sendResponse({ siteAllowed: next.some(c => hostCandidates.includes(c)) });
       }
     } catch (e) {
       console.error("Message execution error:", e);

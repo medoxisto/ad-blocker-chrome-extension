@@ -10,7 +10,7 @@
 // as soon as it loads, then waits for us to answer with an "invoke-scriptlet" event carrying the
 // per-domain args. We must attach that listener SYNCHRONOUSLY (before any await) or we lose the race.
 
-(() => {
+(async () => {
   const host = location.hostname.replace(/\.$/, "");
   if (!host) return;
 
@@ -23,24 +23,45 @@
 
   // 1) Establish a secure randomized token with the MAIN world
   const secretToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  let tokenTemp = secretToken;
 
-  Object.defineProperty(window, "__shield_token", {
-    get() {
-      const val = tokenTemp;
-      tokenTemp = undefined; // Self-deleting on first access
-      try { delete window.__shield_token; } catch(_) {}
-      return val;
-    },
-    configurable: true
-  });
+  // Set the token on document.documentElement so scriptlets.js (in the MAIN world) can retrieve it
+  const injectToken = () => {
+    if (document.documentElement) {
+      document.documentElement.setAttribute("data-shield-token", secretToken);
+      return true;
+    }
+    return false;
+  };
+
+  if (!injectToken()) {
+    const observer = new MutationObserver(() => {
+      if (injectToken()) {
+        observer.disconnect();
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }
 
   function candidates(h) {
     const out = new Set();
     const base = h.replace(/^www\./, "");
+    
+    // Handle IP addresses and single-label hosts (no dots)
+    const isIPv4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+    const isIPv6 = h.includes(":");
+    const hasDots = h.includes(".");
+    
+    if (isIPv4 || isIPv6 || !hasDots) {
+      out.add(h);
+      out.add(base);
+      return [...out];
+    }
+
     for (const v of [h, base]) {
       const parts = v.split(".");
-      for (let i = 0; i + 2 <= parts.length; i++) out.add(parts.slice(i).join("."));
+      for (let i = 0; i + 2 <= parts.length; i++) {
+        out.add(parts.slice(i).join("."));
+      }
     }
     return [...out];
   }
@@ -72,7 +93,8 @@
   });
 
   // 3) Read settings + this page's filter entries.
-  chrome.storage.local.get(["enabled", "allowlist", "_filters_ready_version", ...domKeys]).then(store => {
+  try {
+    const store = await chrome.storage.local.get(["enabled", "allowlist", "_filters_ready_version", ...domKeys]);
     const isAllowlisted = candidates(host).some(c => (store.allowlist || []).includes(c));
     if (store.enabled === false || isAllowlisted) {
       resolveData(null); // disabled here → never send args, scriptlets stay idle
@@ -136,5 +158,7 @@
       if (document.documentElement) start();
       else document.addEventListener("readystatechange", start, { once: true });
     }
-  }).catch(() => resolveData(null));
+  } catch (e) {
+    resolveData(null);
+  }
 })();
